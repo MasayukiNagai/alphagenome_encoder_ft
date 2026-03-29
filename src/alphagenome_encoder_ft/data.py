@@ -82,6 +82,17 @@ class LentiMPRADataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
         if not self.input_tsv.exists():
             raise FileNotFoundError(f"Dataset file not found: {self.input_tsv}")
 
+        rows = self._read_tsv()
+
+        if subset_frac < 1.0 and rows:
+            sample_size = max(1, int(round(len(rows) * subset_frac)))
+            sample_indices = self._rng.choice(len(rows), size=sample_size, replace=False)
+            rows = [rows[int(idx)] for idx in sorted(sample_indices.tolist())]
+
+        self._payloads = [str(row["seq"]) for row in rows]
+        self._targets = np.asarray([float(row["mean_value"]) for row in rows], dtype=np.float32)
+
+    def _read_tsv(self) -> list[dict[str, str]]:
         split_folds = {
             "train": self.train_folds,
             "val": self.valid_folds,
@@ -97,14 +108,7 @@ class LentiMPRADataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
                 if int(row["fold"]) not in split_folds:
                     continue
                 rows.append(row)
-
-        if subset_frac < 1.0 and rows:
-            sample_size = max(1, int(round(len(rows) * subset_frac)))
-            sample_indices = self._rng.choice(len(rows), size=sample_size, replace=False)
-            rows = [rows[int(idx)] for idx in sorted(sample_indices.tolist())]
-
-        self._payloads = [str(row["seq"]) for row in rows]
-        self._targets = np.asarray([float(row["mean_value"]) for row in rows], dtype=np.float32)
+        return rows
 
     def __len__(self) -> int:
         return len(self._payloads)
