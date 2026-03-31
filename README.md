@@ -1,8 +1,8 @@
 # AlphaGenome Encoder Fine-tuning
 
-`alphagenome-encoder-ft` is a PyTorch implementation of the encoder-only MPRA fine-tuning workflow from [`alphagenome_FT_MPRA`](../alphagenome_FT_MPRA/README.md).
+`alphagenome-encoder-ft` is a PyTorch implementation of the encoder-only MPRA fine-tuning workflow from [`alphagenome_FT_MPRA`](https://github.com/Al-Murphy/alphagenome_FT_MPRA).
 
-This repository is built on top of [`alphagenome-pytorch`](../alphagenome-pytorch/README.md) and focuses on a smaller scope than the original JAX-based project. In particular, it currently targets lentiMPRA-style scalar regression with AlphaGenome encoder features, reusable encoder-only training utilities, and an MPRA oracle API for inference. It does **not** aim to cover all of the features in `alphagenome_FT_MPRA`.
+This repository is built on top of [`alphagenome-pytorch`](https://github.com/genomicsxai/alphagenome-pytorch/tree/main) and focuses on a smaller scope than the original JAX-based project. In particular, it currently targets lentiMPRA-style scalar regression with AlphaGenome encoder faeatures, reusable encoder-only training utilities, and an MPRA oracle API for inference. It does **not** aim to cover all of the features in `alphagenome_FT_MPRA`.
 
 ## Scope
 
