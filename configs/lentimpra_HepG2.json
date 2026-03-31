@@ -1,5 +1,5 @@
 {
-  "_comment": "Normalized config schema for LentiMPRA K562 training.",
+  "_comment": "Normalized config schema for LentiMPRA HepG2 training.",
   "data": {
     "input_tsv": null,
     "sequence_length": 256,
@@ -10,8 +10,8 @@
     "shift_prob": 0.5,
     "max_shift": 15,
     "subset_frac": 1.0,
-    "num_workers": 4,
-    "pin_memory": true
+    "num_workers": 0,
+    "pin_memory": false
   },
   "head": {
     "pooling_type": "flatten",
@@ -22,7 +22,7 @@
   },
   "optim": {
     "optimizer": "adam",
-    "learning_rate": 1e-03,
+    "learning_rate": 0.001,
     "weight_decay": 1e-06,
     "lr_scheduler": "constant",
     "gradient_accumulation_steps": 1,
@@ -31,20 +31,20 @@
   "stage": {
     "num_epochs": 100,
     "early_stopping_patience": 5,
-    "val_eval_frequency": 1,
+    "val_eval_frequency": 4,
     "second_stage_lr": 1e-05,
     "second_stage_epochs": 50,
     "resume_from_stage2": false
   },
   "checkpoint": {
     "pretrained_weights": null,
-    "checkpoint_dir": "./results/mpra_K562",
+    "checkpoint_dir": "./results/mpra_HepG2",
     "save_mode": "minimal"
   },
   "logging": {
     "use_wandb": true,
     "wandb_project": "alphagenome-mpra",
-    "wandb_name": "mpra-K562"
+    "wandb_name": "mpra-HepG2"
   },
   "runtime": {
     "device": null,

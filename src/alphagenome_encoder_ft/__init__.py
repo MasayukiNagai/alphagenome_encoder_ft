@@ -6,8 +6,21 @@ __all__ = [
     "DEFAULT_LEFT_ADAPTER_SEQ",
     "DEFAULT_PROMOTER_SEQ",
     "DEFAULT_RIGHT_ADAPTER_SEQ",
+    "DataConfig",
+    "HeadConfig",
+    "OptimConfig",
+    "StageConfig",
+    "CheckpointConfig",
+    "LoggingConfig",
+    "RuntimeConfig",
+    "TrainConfig",
+    "load_train_config",
+    "merge_train_config",
+    "parse_hidden_sizes",
     "LentiMPRADataset",
     "create_dataloader",
+    "EncoderMPRAModel",
+    "load_pretrained_model",
     "MPRAHead",
     "MPRAOracle",
     "load_oracle",
@@ -18,6 +31,9 @@ __all__ = [
     "save_checkpoint",
     "load_checkpoint",
     "set_encoder_trainable",
+    "create_optimizer",
+    "create_scheduler",
+    "scheduler_stepper",
 ]
 
 
@@ -34,6 +50,26 @@ def __getattr__(name: str):
         from . import data
 
         return getattr(data, name)
+    if name in {
+        "DataConfig",
+        "HeadConfig",
+        "OptimConfig",
+        "StageConfig",
+        "CheckpointConfig",
+        "LoggingConfig",
+        "RuntimeConfig",
+        "TrainConfig",
+        "load_train_config",
+        "merge_train_config",
+        "parse_hidden_sizes",
+    }:
+        from . import config
+
+        return getattr(config, name)
+    if name in {"EncoderMPRAModel", "load_pretrained_model"}:
+        from . import model
+
+        return getattr(model, name)
     if name == "MPRAHead":
         from .heads import MPRAHead
 
@@ -50,6 +86,9 @@ def __getattr__(name: str):
         "save_checkpoint",
         "load_checkpoint",
         "set_encoder_trainable",
+        "create_optimizer",
+        "create_scheduler",
+        "scheduler_stepper",
     }:
         from . import train
 

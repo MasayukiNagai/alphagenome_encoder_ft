@@ -75,7 +75,10 @@ class MPRAHead(nn.Module):
         self.mlp = nn.Sequential(*layers)
 
     def _pool(self, encoder_output: torch.Tensor) -> torch.Tensor:
-        x = self.norm(encoder_output)
+        x = encoder_output
+        if x.ndim == 3 and x.shape[-1] != ENCODER_DIM and x.shape[1] == ENCODER_DIM:
+            x = x.transpose(1, 2)
+        x = self.norm(x)
         if self.pooling_type == "flatten":
             return x.flatten(1)
 

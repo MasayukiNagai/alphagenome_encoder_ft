@@ -5,7 +5,9 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from alphagenome_encoder_ft.config import TrainConfig
 from alphagenome_encoder_ft.heads import MPRAHead
+from alphagenome_encoder_ft.model import EncoderMPRAModel
 from alphagenome_encoder_ft.oracle import MPRAOracle, load_oracle
 from alphagenome_encoder_ft.train import save_checkpoint
 
@@ -60,22 +62,43 @@ def test_oracle_modes_change_sequence_length():
 
 def test_load_oracle_roundtrip_minimal_checkpoint(tmp_path: Path):
     torch.manual_seed(0)
-    model = DummyAlphaGenome()
-    head = MPRAHead(pooling_type="flatten", hidden_sizes=8)
+    wrapped = EncoderMPRAModel(DummyAlphaGenome(), MPRAHead(pooling_type="flatten", hidden_sizes=8))
+    wrapped.initialize_head(sequence_length=2, device="cpu")
     sample = torch.randn(1, 2, 4)
-    model.eval()
-    head.eval()
-    direct_preds = head(model(sample, torch.zeros(1, dtype=torch.long), encoder_only=True)["encoder_output"])
+    wrapped.eval()
+    direct_preds = wrapped(sample, torch.zeros(1, dtype=torch.long))
+    config = TrainConfig.from_dict(
+        {
+            "data": {
+                "input_tsv": "/tmp/mock.tsv",
+                "sequence_length": 256,
+                "left_adapter_seq": "A",
+                "right_adapter_seq": "C",
+                "promoter_seq": "G",
+                "barcode_seq": "T",
+            },
+            "head": {
+                "pooling_type": "flatten",
+                "hidden_sizes": [8],
+                "center_bp": 256,
+                "dropout": 0.1,
+                "activation": "relu",
+            },
+            "checkpoint": {
+                "pretrained_weights": "/tmp/weights.pt",
+                "checkpoint_dir": str(tmp_path),
+                "save_mode": "minimal",
+            },
+        }
+    )
 
     checkpoint_path = save_checkpoint(
         tmp_path / "best.pt",
-        model,
-        head,
+        wrapped,
+        config=config,
         save_mode="minimal",
         stage="stage1",
         epoch=1,
-        head_config={"pooling_type": "flatten", "hidden_sizes": 8, "center_bp": 256, "dropout": 0.1, "activation": "relu"},
-        construct_config={"left_adapter": "A", "right_adapter": "C", "promoter_seq": "G", "barcode_seq": "T", "sequence_length": 256},
     )
 
     oracle = load_oracle(checkpoint_path, device="cpu", _model_factory=DummyAlphaGenome)

@@ -10,6 +10,16 @@ from typing import Any, Callable
 import torch
 import torch.nn.functional as F
 from torch import Tensor
+from torch.optim import Adam, AdamW
+from torch.optim.lr_scheduler import CosineAnnealingLR, ReduceLROnPlateau
+
+try:
+    from tqdm.auto import tqdm
+except ImportError:
+    tqdm = None
+
+from .config import OptimConfig, TrainConfig
+from .model import EncoderMPRAModel
 
 
 def _autocast_context(device: torch.device, use_amp: bool):
@@ -54,18 +64,51 @@ def _gather_predictions(preds: list[Tensor], targets: list[Tensor]) -> tuple[Ten
     return pred_tensor, target_tensor
 
 
-def set_encoder_trainable(model: torch.nn.Module, trainable: bool) -> None:
-    """Toggle trainability of ``model.encoder`` parameters."""
+def set_encoder_trainable(model: EncoderMPRAModel, trainable: bool) -> None:
+    model.set_encoder_trainable(trainable)
 
-    if not hasattr(model, "encoder"):
-        raise AttributeError("Model does not have an 'encoder' attribute")
-    for param in model.encoder.parameters():
-        param.requires_grad = trainable
+
+def create_optimizer(
+    optim_config: OptimConfig,
+    params,
+    *,
+    learning_rate: float | None = None,
+) -> torch.optim.Optimizer:
+    lr = optim_config.learning_rate if learning_rate is None else learning_rate
+    if optim_config.optimizer == "adam":
+        return Adam(params, lr=lr, weight_decay=optim_config.weight_decay)
+    return AdamW(params, lr=lr, weight_decay=optim_config.weight_decay)
+
+
+def create_scheduler(
+    lr_scheduler: str,
+    optimizer: torch.optim.Optimizer,
+    total_epochs: int,
+):
+    if lr_scheduler == "constant":
+        return None
+    if lr_scheduler == "cosine":
+        return CosineAnnealingLR(optimizer, T_max=max(1, total_epochs))
+    if lr_scheduler == "plateau":
+        return ReduceLROnPlateau(optimizer, mode="min", patience=2)
+    raise ValueError(f"Unknown lr_scheduler: {lr_scheduler}")
+
+
+def scheduler_stepper(name: str):
+    if name == "plateau":
+        return lambda scheduler, metrics: scheduler.step(metrics["loss"]) if scheduler is not None else None
+    return lambda scheduler, metrics: scheduler.step() if scheduler is not None else None
+
+
+def _num_batches(data_loader) -> int | None:
+    try:
+        return len(data_loader)
+    except TypeError:
+        return None
 
 
 def train_epoch(
-    model: torch.nn.Module,
-    head: torch.nn.Module,
+    model: EncoderMPRAModel,
     train_loader,
     optimizer: torch.optim.Optimizer,
     device: torch.device | str,
@@ -74,8 +117,9 @@ def train_epoch(
     metric_fns: dict[str, Callable[[Tensor, Tensor], Tensor | float]] | None = None,
     gradient_accumulation_steps: int = 1,
     use_amp: bool = True,
-    encoder_trainable: bool = False,
+    train_encoder: bool = False,
     grad_clip: float | None = None,
+    show_progress: bool = False,
 ) -> dict[str, float]:
     """Train for one epoch."""
 
@@ -84,11 +128,11 @@ def train_epoch(
     if gradient_accumulation_steps <= 0:
         raise ValueError("gradient_accumulation_steps must be > 0")
 
-    if encoder_trainable:
+    if train_encoder:
         model.train()
     else:
         model.eval()
-    head.train()
+        model.head.train()
 
     total_loss = 0.0
     total_samples = 0
@@ -96,28 +140,41 @@ def train_epoch(
     all_targets: list[Tensor] = []
 
     optimizer.zero_grad(set_to_none=True)
-    autocast_ctx = _autocast_context(device, use_amp)
 
-    for batch_idx, (sequences, targets) in enumerate(train_loader, start=1):
+    num_batches = _num_batches(train_loader)
+    batch_iterator = train_loader
+    if tqdm is not None and show_progress:
+        batch_iterator = tqdm(
+            train_loader,
+            total=num_batches,
+            desc="train",
+            leave=False,
+        )
+
+    for batch_idx, (sequences, targets) in enumerate(batch_iterator, start=1):
         sequences = sequences.to(device)
         targets = targets.to(device).float()
         organism_idx = torch.zeros(sequences.shape[0], dtype=torch.long, device=device)
+        autocast_ctx = _autocast_context(device, use_amp)
 
-        model_context = nullcontext() if encoder_trainable else torch.no_grad()
-        with model_context:
+        if train_encoder:
             with autocast_ctx:
-                encoder_output = model(sequences, organism_idx, encoder_only=True)["encoder_output"]
-
-        with autocast_ctx:
-            preds = head(encoder_output)
-            loss = loss_fn(preds, targets)
+                preds = model(sequences, organism_idx)
+                loss = loss_fn(preds, targets)
+        else:
+            with torch.no_grad():
+                with autocast_ctx:
+                    encoder_output = model.encode(sequences, organism_idx)
+            with autocast_ctx:
+                preds = model.predict_from_encoder(encoder_output)
+                loss = loss_fn(preds, targets)
 
         (loss / gradient_accumulation_steps).backward()
 
         if batch_idx % gradient_accumulation_steps == 0 or batch_idx == len(train_loader):
             if grad_clip is not None:
-                torch.nn.utils.clip_grad_norm_(head.parameters(), grad_clip)
-                if encoder_trainable and hasattr(model, "encoder"):
+                torch.nn.utils.clip_grad_norm_(model.head.parameters(), grad_clip)
+                if train_encoder:
                     torch.nn.utils.clip_grad_norm_(model.encoder.parameters(), grad_clip)
             optimizer.step()
             optimizer.zero_grad(set_to_none=True)
@@ -128,6 +185,9 @@ def train_epoch(
         all_preds.append(preds.detach().float().cpu())
         all_targets.append(targets.detach().float().cpu())
 
+        if tqdm is not None and show_progress:
+            batch_iterator.set_postfix(loss=total_loss / max(1, total_samples))
+
     preds_cat, targets_cat = _gather_predictions(all_preds, all_targets)
     metrics = _compute_metrics(preds_cat, targets_cat, metric_fns)
     metrics["loss"] = total_loss / max(1, total_samples)
@@ -136,8 +196,7 @@ def train_epoch(
 
 @torch.no_grad()
 def evaluate(
-    model: torch.nn.Module,
-    head: torch.nn.Module,
+    model: EncoderMPRAModel,
     data_loader,
     device: torch.device | str,
     *,
@@ -150,22 +209,18 @@ def evaluate(
     device = torch.device(device)
     loss_fn = loss_fn or _default_loss_fn
     model.eval()
-    head.eval()
 
     total_loss = 0.0
     total_samples = 0
     all_preds: list[Tensor] = []
     all_targets: list[Tensor] = []
 
-    autocast_ctx = _autocast_context(device, use_amp)
     for sequences, targets in data_loader:
         sequences = sequences.to(device)
         targets = targets.to(device).float()
         organism_idx = torch.zeros(sequences.shape[0], dtype=torch.long, device=device)
-
-        with autocast_ctx:
-            encoder_output = model(sequences, organism_idx, encoder_only=True)["encoder_output"]
-            preds = head(encoder_output)
+        with _autocast_context(device, use_amp):
+            preds = model(sequences, organism_idx)
             loss = loss_fn(preds, targets)
 
         batch_size = targets.shape[0]
@@ -182,22 +237,15 @@ def evaluate(
 
 def save_checkpoint(
     path: str | Path,
-    model: torch.nn.Module,
-    head: torch.nn.Module,
+    model: EncoderMPRAModel,
     *,
+    config: TrainConfig,
     save_mode: str,
     stage: str,
     epoch: int,
-    head_config: dict[str, Any],
-    construct_config: dict[str, Any],
-    training_config: dict[str, Any] | None = None,
     metrics: dict[str, Any] | None = None,
 ) -> Path:
     """Save a checkpoint following the repo checkpoint contract."""
-
-    save_mode = save_mode.lower()
-    if save_mode not in {"minimal", "full", "head"}:
-        raise ValueError(f"Unknown save_mode: {save_mode}")
 
     checkpoint_path = Path(path)
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
@@ -206,10 +254,10 @@ def save_checkpoint(
         "save_mode": save_mode,
         "stage": stage,
         "epoch": epoch,
-        "head_state_dict": head.state_dict(),
-        "head_config": head_config,
-        "construct_config": construct_config,
-        "training_config": training_config or {},
+        "config": config.to_dict(),
+        "head_state_dict": model.head.state_dict(),
+        "head_config": config.head_kwargs(),
+        "construct_config": config.construct_config(),
         "metrics": metrics or {},
     }
 
@@ -217,6 +265,8 @@ def save_checkpoint(
         payload["encoder_state_dict"] = model.encoder.state_dict()
     elif save_mode == "full":
         payload["model_state_dict"] = model.state_dict()
+    elif save_mode != "head":
+        raise ValueError(f"Unknown save_mode: {save_mode}")
 
     torch.save(payload, checkpoint_path)
     return checkpoint_path
@@ -224,12 +274,11 @@ def save_checkpoint(
 
 def load_checkpoint(
     path: str | Path,
-    model: torch.nn.Module,
-    head: torch.nn.Module | None = None,
+    model: EncoderMPRAModel,
     *,
     map_location: str | torch.device = "cpu",
 ) -> dict[str, Any]:
-    """Load a checkpoint into ``model`` and optionally ``head``."""
+    """Load a checkpoint into ``model``."""
 
     checkpoint = torch.load(path, map_location=map_location, weights_only=False)
     save_mode = checkpoint["save_mode"]
@@ -241,8 +290,7 @@ def load_checkpoint(
     elif save_mode != "head":
         raise ValueError(f"Unknown save_mode: {save_mode}")
 
-    if head is not None:
-        head.load_state_dict(checkpoint["head_state_dict"])
+    model.head.load_state_dict(checkpoint["head_state_dict"])
     return checkpoint
 
 
@@ -253,16 +301,6 @@ def _default_scheduler_step(scheduler, metrics: dict[str, float]) -> None:
         scheduler.step(metrics["loss"])
     else:
         scheduler.step()
-
-
-def _stage_eval_points(num_batches: int, frequency: int) -> list[int]:
-    if frequency <= 1:
-        return [num_batches]
-    interval = max(1, num_batches // frequency)
-    points = sorted({min(i * interval, num_batches) for i in range(1, frequency + 1)})
-    if points[-1] != num_batches:
-        points.append(num_batches)
-    return points
 
 
 def _history_template() -> dict[str, list[float]]:
@@ -285,42 +323,29 @@ def _append_stage_history(history: dict[str, list[float]], stage_history: dict[s
 
 
 def run_training_stage(
-    model: torch.nn.Module,
-    head: torch.nn.Module,
+    model: EncoderMPRAModel,
     train_loader,
     *,
     optimizer: torch.optim.Optimizer,
+    config: TrainConfig,
     device: torch.device | str,
     num_epochs: int,
     stage: str,
-    encoder_trainable: bool,
+    train_encoder: bool,
     val_loader=None,
-    test_loader=None,
     scheduler=None,
     scheduler_step: Callable[[Any, dict[str, float]], None] | None = None,
     loss_fn: Callable[[Tensor, Tensor], Tensor] | None = None,
     metric_fns: dict[str, Callable[[Tensor, Tensor], Tensor | float]] | None = None,
     checkpoint_dir: str | Path | None = None,
-    save_mode: str = "minimal",
-    head_config: dict[str, Any] | None = None,
-    construct_config: dict[str, Any] | None = None,
-    training_config: dict[str, Any] | None = None,
-    early_stopping_patience: int = 5,
-    gradient_accumulation_steps: int = 1,
-    use_amp: bool = True,
-    val_eval_frequency: int = 1,
-    test_eval_frequency: int = 1,
     start_epoch: int = 0,
-    grad_clip: float | None = None,
+    epoch_callback: Callable[[dict[str, Any]], None] | None = None,
+    show_progress: bool = False,
 ) -> dict[str, Any]:
     """Run a single training stage."""
 
     device = torch.device(device)
-    head_config = head_config or {}
-    construct_config = construct_config or {}
-    training_config = training_config or {}
     scheduler_step = scheduler_step or _default_scheduler_step
-
     stage_dir = Path(checkpoint_dir) if checkpoint_dir is not None else None
     if stage_dir is not None:
         stage_dir.mkdir(parents=True, exist_ok=True)
@@ -333,18 +358,24 @@ def run_training_stage(
 
     for epoch_idx in range(num_epochs):
         epoch_number = start_epoch + epoch_idx + 1
+        is_last_epoch = epoch_idx == num_epochs - 1
+        should_run_val = val_loader is not None and (
+            config.stage.val_eval_frequency <= 1
+            or epoch_number % config.stage.val_eval_frequency == 0
+            or is_last_epoch
+        )
         train_metrics = train_epoch(
             model,
-            head,
             train_loader,
             optimizer,
             device,
             loss_fn=loss_fn,
             metric_fns=metric_fns,
-            gradient_accumulation_steps=gradient_accumulation_steps,
-            use_amp=use_amp,
-            encoder_trainable=encoder_trainable,
-            grad_clip=grad_clip,
+            gradient_accumulation_steps=config.optim.gradient_accumulation_steps,
+            use_amp=config.runtime.use_amp,
+            train_encoder=train_encoder,
+            grad_clip=config.optim.gradient_clip,
+            show_progress=show_progress,
         )
         history["train_loss"].append(train_metrics["loss"])
         history["train_pearson"].append(train_metrics.get("pearson", float("nan")))
@@ -352,60 +383,68 @@ def run_training_stage(
 
         current_monitor = train_metrics["loss"]
         latest_eval_metrics = {"loss": current_monitor}
+        val_metrics = None
+        should_update_monitor = val_loader is None
 
-        if val_loader is not None:
+        if should_run_val:
             val_metrics = evaluate(
                 model,
-                head,
                 val_loader,
                 device,
                 loss_fn=loss_fn,
                 metric_fns=metric_fns,
-                use_amp=use_amp,
+                use_amp=config.runtime.use_amp,
             )
             history["val_loss"].append(val_metrics["loss"])
             history["val_pearson"].append(val_metrics.get("pearson", float("nan")))
             history["val_epoch"].append(float(epoch_number))
             current_monitor = val_metrics["loss"]
             latest_eval_metrics = val_metrics
-
-        if test_loader is not None:
-            test_metrics = evaluate(
-                model,
-                head,
-                test_loader,
-                device,
-                loss_fn=loss_fn,
-                metric_fns=metric_fns,
-                use_amp=use_amp,
-            )
-            history["test_loss"].append(test_metrics["loss"])
-            history["test_pearson"].append(test_metrics.get("pearson", float("nan")))
-            history["test_epoch"].append(float(epoch_number))
+            should_update_monitor = True
 
         scheduler_step(scheduler, latest_eval_metrics)
 
-        if current_monitor < best_monitor:
-            best_monitor = current_monitor
-            best_epoch = epoch_number
-            evals_without_improvement = 0
-            if stage_dir is not None:
-                best_checkpoint_path = save_checkpoint(
-                    stage_dir / "best.pt",
-                    model,
-                    head,
-                    save_mode=save_mode,
-                    stage=stage,
-                    epoch=epoch_number,
-                    head_config=head_config,
-                    construct_config=construct_config,
-                    training_config=training_config,
-                    metrics=latest_eval_metrics,
-                )
-        else:
-            evals_without_improvement += 1
+        if should_update_monitor:
+            if current_monitor < best_monitor:
+                best_monitor = current_monitor
+                best_epoch = epoch_number
+                evals_without_improvement = 0
+                if stage_dir is not None:
+                    best_checkpoint_path = save_checkpoint(
+                        stage_dir / "best.pt",
+                        model,
+                        config=config,
+                        save_mode=config.checkpoint.save_mode,
+                        stage=stage,
+                        epoch=epoch_number,
+                        metrics=latest_eval_metrics,
+                    )
+            else:
+                evals_without_improvement += 1
 
-        if val_loader is not None and evals_without_improvement >= early_stopping_patience:
+        metrics_parts = [
+            f"[{stage}] epoch {epoch_number}",
+            f"train_loss={train_metrics['loss']:.4f}",
+            f"train_pearson={train_metrics.get('pearson', float('nan')):.4f}",
+        ]
+        if val_metrics is not None:
+            metrics_parts.append(f"val_loss={val_metrics['loss']:.4f}")
+            metrics_parts.append(f"val_pearson={val_metrics.get('pearson', float('nan')):.4f}")
+        print(" | ".join(metrics_parts))
+
+        if epoch_callback is not None:
+            payload: dict[str, Any] = {
+                "stage": stage,
+                "epoch": float(epoch_number),
+                "train_loss": train_metrics["loss"],
+                "train_pearson": train_metrics.get("pearson", float("nan")),
+            }
+            if val_metrics is not None:
+                payload["val_loss"] = val_metrics["loss"]
+                payload["val_pearson"] = val_metrics.get("pearson", float("nan"))
+            epoch_callback(payload)
+
+        if should_run_val and evals_without_improvement >= config.stage.early_stopping_patience:
             break
 
     return {
@@ -417,48 +456,33 @@ def run_training_stage(
 
 
 def run_two_stage_training(
-    model: torch.nn.Module,
-    head: torch.nn.Module,
+    model: EncoderMPRAModel,
     train_loader,
     *,
     stage1_optimizer: torch.optim.Optimizer,
-    stage2_optimizer_factory: Callable[[torch.nn.Module, torch.nn.Module], torch.optim.Optimizer] | None,
+    stage2_optimizer_factory: Callable[[EncoderMPRAModel], torch.optim.Optimizer] | None,
+    config: TrainConfig,
     device: torch.device | str,
-    stage1_num_epochs: int,
-    stage2_num_epochs: int,
     val_loader=None,
-    test_loader=None,
     stage1_scheduler=None,
     stage2_scheduler_factory: Callable[[torch.optim.Optimizer], Any] | None = None,
     stage1_scheduler_step: Callable[[Any, dict[str, float]], None] | None = None,
     stage2_scheduler_step: Callable[[Any, dict[str, float]], None] | None = None,
     loss_fn: Callable[[Tensor, Tensor], Tensor] | None = None,
     metric_fns: dict[str, Callable[[Tensor, Tensor], Tensor | float]] | None = None,
-    checkpoint_dir: str | Path | None = None,
-    save_mode: str = "minimal",
-    head_config: dict[str, Any] | None = None,
-    construct_config: dict[str, Any] | None = None,
-    training_config: dict[str, Any] | None = None,
-    early_stopping_patience: int = 5,
-    gradient_accumulation_steps: int = 1,
-    use_amp: bool = True,
-    val_eval_frequency: int = 1,
-    test_eval_frequency: int = 1,
-    grad_clip: float | None = None,
-    resume_from_stage2: bool = False,
+    epoch_callback: Callable[[dict[str, Any]], None] | None = None,
+    show_progress: bool = False,
 ) -> dict[str, Any]:
     """Run stage 1 head-only training followed by stage 2 encoder+head training."""
 
-    if stage2_num_epochs <= 0:
-        raise ValueError("stage2_num_epochs must be > 0")
+    if config.stage.second_stage_lr is None:
+        raise ValueError("stage.second_stage_lr must be set for two-stage training")
     if stage2_optimizer_factory is None:
         raise ValueError("stage2_optimizer_factory is required for two-stage training")
-    if save_mode == "head":
+    if config.checkpoint.save_mode == "head":
         raise ValueError("head save_mode is not allowed for two-stage training")
-    if checkpoint_dir is None:
-        raise ValueError("checkpoint_dir is required for two-stage training")
 
-    checkpoint_dir = Path(checkpoint_dir)
+    checkpoint_dir = Path(config.checkpoint.checkpoint_dir)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     combined_history = _history_template()
 
@@ -466,41 +490,32 @@ def run_two_stage_training(
     stage2_dir = checkpoint_dir / "stage2"
     stage1_result: dict[str, Any]
 
-    if not resume_from_stage2:
-        set_encoder_trainable(model, False)
+    if not config.stage.resume_from_stage2:
+        model.set_encoder_trainable(False)
         stage1_result = run_training_stage(
             model,
-            head,
             train_loader,
             optimizer=stage1_optimizer,
+            config=config,
             device=device,
-            num_epochs=stage1_num_epochs,
+            num_epochs=config.stage.num_epochs,
             stage="stage1",
-            encoder_trainable=False,
+            train_encoder=False,
             val_loader=val_loader,
-            test_loader=test_loader,
             scheduler=stage1_scheduler,
             scheduler_step=stage1_scheduler_step,
             loss_fn=loss_fn,
             metric_fns=metric_fns,
             checkpoint_dir=stage1_dir,
-            save_mode=save_mode,
-            head_config=head_config,
-            construct_config=construct_config,
-            training_config=training_config,
-            early_stopping_patience=early_stopping_patience,
-            gradient_accumulation_steps=gradient_accumulation_steps,
-            use_amp=use_amp,
-            val_eval_frequency=val_eval_frequency,
-            test_eval_frequency=test_eval_frequency,
-            grad_clip=grad_clip,
+            epoch_callback=epoch_callback,
+            show_progress=show_progress,
         )
         _append_stage_history(combined_history, stage1_result["history"])
     else:
         stage1_checkpoint = stage1_dir / "best.pt"
         if not stage1_checkpoint.exists():
             raise FileNotFoundError(f"Stage 1 checkpoint not found: {stage1_checkpoint}")
-        load_checkpoint(stage1_checkpoint, model, head)
+        load_checkpoint(stage1_checkpoint, model)
         stage1_result = {
             "history": _history_template(),
             "best_epoch": 0,
@@ -508,41 +523,30 @@ def run_two_stage_training(
             "best_checkpoint_path": str(stage1_checkpoint),
         }
 
-    best_stage1_path = stage1_result["best_checkpoint_path"]
-    if best_stage1_path is None:
-        best_stage1_path = str(stage1_dir / "best.pt")
-    load_checkpoint(best_stage1_path, model, head)
+    best_stage1_path = stage1_result["best_checkpoint_path"] or str(stage1_dir / "best.pt")
+    load_checkpoint(best_stage1_path, model)
 
-    set_encoder_trainable(model, True)
-    stage2_optimizer = stage2_optimizer_factory(model, head)
+    model.set_encoder_trainable(True)
+    stage2_optimizer = stage2_optimizer_factory(model)
     stage2_scheduler = stage2_scheduler_factory(stage2_optimizer) if stage2_scheduler_factory is not None else None
     stage2_result = run_training_stage(
         model,
-        head,
         train_loader,
         optimizer=stage2_optimizer,
+        config=config,
         device=device,
-        num_epochs=stage2_num_epochs,
+        num_epochs=config.stage.second_stage_epochs,
         stage="stage2",
-        encoder_trainable=True,
+        train_encoder=True,
         val_loader=val_loader,
-        test_loader=test_loader,
         scheduler=stage2_scheduler,
         scheduler_step=stage2_scheduler_step,
         loss_fn=loss_fn,
         metric_fns=metric_fns,
         checkpoint_dir=stage2_dir,
-        save_mode=save_mode,
-        head_config=head_config,
-        construct_config=construct_config,
-        training_config=training_config,
-        early_stopping_patience=early_stopping_patience,
-        gradient_accumulation_steps=gradient_accumulation_steps,
-        use_amp=use_amp,
-        val_eval_frequency=val_eval_frequency,
-        test_eval_frequency=test_eval_frequency,
         start_epoch=stage1_result["best_epoch"],
-        grad_clip=grad_clip,
+        epoch_callback=epoch_callback,
+        show_progress=show_progress,
     )
     _append_stage_history(combined_history, stage2_result["history"])
 
