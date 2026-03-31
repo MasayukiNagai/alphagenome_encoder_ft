@@ -10,6 +10,7 @@ The current codebase includes:
 
 - a `LentiMPRADataset` for TSV-based lentiMPRA training data
 - a lightweight `MPRAHead` for scalar prediction from encoder outputs
+- a normalized dataclass-based training config and an `EncoderMPRAModel` wrapper
 - reusable encoder-only training helpers with stage 1 head-only training and optional stage 2 encoder unfreezing
 - an MPRA oracle with `core`, `flanked`, and `full` construct modes
 - an MPRA-specific training script in [`scripts/train_mpra.py`](scripts/train_mpra.py)
@@ -23,6 +24,8 @@ alphagenome-encoder-ft/
 ├── src/alphagenome_encoder_ft/
 │   ├── data.py      # lentiMPRA dataset and dataloader helpers
 │   ├── heads.py     # MPRAHead
+│   ├── config.py    # normalized training config dataclasses
+│   ├── model.py     # EncoderMPRAModel wrapper
 │   ├── oracle.py    # MPRAOracle and checkpoint loading
 │   ├── train.py     # reusable encoder-only training utilities
 │   └── __init__.py
@@ -31,13 +34,15 @@ alphagenome-encoder-ft/
 └── tests/
 ```
 
-## Quick Start
+## Train
 
 ```bash
 cd alphagenome-encoder-ft
-PYTHONPATH=src python scripts/train_mpra.py \
-  --input_tsv /path/to/HepG2.tsv \
-  --pretrained_weights /path/to/alphagenome.pt
+PYTHONPATH=src python scripts/train_mpra.py   --config configs/lentimpra_HepG2.normalized.json   --input_tsv /path/to/HepG2.tsv   --pretrained_weights /path/to/alphagenome.pt
 ```
 
 For direct Python usage, import from `alphagenome_encoder_ft` after setting `PYTHONPATH=src` or installing the package in editable mode.
+
+## Load oracle
+```bash
+```
