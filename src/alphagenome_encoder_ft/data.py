@@ -11,15 +11,7 @@ from torch.utils.data import DataLoader, Dataset
 
 from alphagenome_pytorch.utils.sequence import sequence_to_onehot
 
-DEFAULT_LEFT_ADAPTER_SEQ = "AGGACCGGATCAACT"
-DEFAULT_RIGHT_ADAPTER_SEQ = "CATTGCGTGAACCGA"
-DEFAULT_PROMOTER_SEQ = "TCCATTATATACCCTCTAGTGTCGGTTCACGCAATG"
-DEFAULT_BARCODE_SEQ = "AGAGACTGAGGCCAC"
-DEFAULT_FOLD_SPLITS = {
-    "train": [2, 3, 4, 5, 6, 7, 8, 9],
-    "val": [1],
-    "test": [10],
-}
+from .constructs import ConstructSpec
 
 
 def _reverse_complement_onehot(onehot: np.ndarray) -> np.ndarray:
@@ -29,6 +21,12 @@ def _reverse_complement_onehot(onehot: np.ndarray) -> np.ndarray:
 class LentiMPRADataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
     """PyTorch Dataset for lentiMPRA TSV files."""
 
+    DEFAULT_FOLD_SPLITS = {
+        "train": [2, 3, 4, 5, 6, 7, 8, 9],
+        "val": [1],
+        "test": [10],
+    }
+
     def __init__(
         self,
         input_tsv: str | Path,
@@ -36,22 +34,20 @@ class LentiMPRADataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
         train_folds: list[int] | None = None,
         valid_folds: list[int] | None = None,
         test_folds: list[int] | None = None,
-        sequence_length: int = 256,
-        promoter_seq: str = DEFAULT_PROMOTER_SEQ,
-        barcode_seq: str = DEFAULT_BARCODE_SEQ,
-        left_adapter_seq: str | None = None,
-        right_adapter_seq: str | None = None,
+        construct_spec: ConstructSpec | None = None,
+        construct_mode: str = "core",
         reverse_complement: bool = False,
         rc_prob: float = 0.5,
         random_shift: bool = False,
         shift_prob: float = 0.5,
         max_shift: int = 15,
+        sequence_length: int | None = None,
         subset_frac: float = 1.0,
         seed: int = 42,
     ) -> None:
-        if split not in DEFAULT_FOLD_SPLITS:
+        if split not in self.DEFAULT_FOLD_SPLITS:
             raise ValueError(f"Unknown split: {split!r}")
-        if sequence_length <= 0:
+        if sequence_length is not None and sequence_length <= 0:
             raise ValueError("sequence_length must be > 0")
         if not 0 < subset_frac <= 1:
             raise ValueError("subset_frac must be in (0, 1]")
@@ -64,20 +60,30 @@ class LentiMPRADataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
 
         self.input_tsv = Path(input_tsv)
         self.split = split
-        self.sequence_length = sequence_length
-        self.promoter_seq = promoter_seq
-        self.barcode_seq = barcode_seq
-        self.left_adapter_seq = left_adapter_seq
-        self.right_adapter_seq = right_adapter_seq
+        if construct_spec is None:
+            raise ValueError("construct_spec must be provided")
+        self.construct_spec = construct_spec
+        self.construct_mode = self.construct_spec.validate_mode(construct_mode)
+        self.promoter_seq = self.construct_spec.promoter_seq
+        self.barcode_seq = self.construct_spec.barcode_seq
+        self.left_adapter_seq = self.construct_spec.left_adapter
+        self.right_adapter_seq = self.construct_spec.right_adapter
         self.reverse_complement = reverse_complement
         self.rc_prob = rc_prob
         self.random_shift = random_shift
         self.shift_prob = shift_prob
         self.max_shift = max_shift
+        self.sequence_length = sequence_length
         self._rng = np.random.default_rng(seed)
-        self.train_folds = list(train_folds) if train_folds is not None else list(DEFAULT_FOLD_SPLITS["train"])
-        self.valid_folds = list(valid_folds) if valid_folds is not None else list(DEFAULT_FOLD_SPLITS["val"])
-        self.test_folds = list(test_folds) if test_folds is not None else list(DEFAULT_FOLD_SPLITS["test"])
+        self.train_folds = (
+            list(train_folds) if train_folds is not None else list(self.DEFAULT_FOLD_SPLITS["train"])
+        )
+        self.valid_folds = (
+            list(valid_folds) if valid_folds is not None else list(self.DEFAULT_FOLD_SPLITS["val"])
+        )
+        self.test_folds = (
+            list(test_folds) if test_folds is not None else list(self.DEFAULT_FOLD_SPLITS["test"])
+        )
 
         if not self.input_tsv.exists():
             raise FileNotFoundError(f"Dataset file not found: {self.input_tsv}")
@@ -113,18 +119,9 @@ class LentiMPRADataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
     def __len__(self) -> int:
         return len(self._payloads)
 
-    def _assemble_construct(self, payload: str) -> str:
-        parts = []
-        if self.left_adapter_seq is not None:
-            parts.append(self.left_adapter_seq)
-        parts.append(payload)
-        if self.right_adapter_seq is not None:
-            parts.append(self.right_adapter_seq)
-        parts.append(self.promoter_seq)
-        parts.append(self.barcode_seq)
-        return "".join(parts)
-
     def _pad_or_trim(self, onehot: np.ndarray) -> np.ndarray:
+        if self.sequence_length is None:
+            return onehot.astype(np.float32, copy=False)
         length = onehot.shape[0]
         if length == self.sequence_length:
             return onehot.astype(np.float32, copy=False)
@@ -145,7 +142,10 @@ class LentiMPRADataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
         return out
 
     def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
-        construct = self._assemble_construct(self._payloads[index])
+        construct = self.construct_spec.assemble_sequence(
+            self._payloads[index],
+            mode=self.construct_mode,
+        )
         onehot = sequence_to_onehot(construct).astype(np.float32, copy=False)
         onehot = self._augment(onehot)
         onehot = self._pad_or_trim(onehot)

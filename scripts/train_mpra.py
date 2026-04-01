@@ -11,8 +11,8 @@ from typing import Any
 import torch
 
 from alphagenome_encoder_ft import (
-    DEFAULT_BARCODE_SEQ,
-    DEFAULT_PROMOTER_SEQ,
+    ConstructSpec,
+    EncoderMPRAModel,
     LentiMPRADataset,
     TrainConfig,
     create_dataloader,
@@ -20,7 +20,6 @@ from alphagenome_encoder_ft import (
     create_scheduler,
     evaluate,
     load_checkpoint,
-    load_pretrained_model,
     load_train_config,
     merge_train_config,
     parse_hidden_sizes,
@@ -41,6 +40,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("--batch_size", type=int, default=None)
     parser.add_argument("--sequence_length", type=int, default=None)
+    parser.add_argument("--construct_mode", type=str, default=None, choices=["core", "flanked", "full"])
     parser.add_argument("--num_workers", type=int, default=None)
     parser.add_argument("--max_shift", type=int, default=None)
     parser.add_argument("--subset_frac", type=float, default=None)
@@ -85,10 +85,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 
 def _resolve_construct_defaults(config: TrainConfig) -> None:
+    default_spec = ConstructSpec.lentimpra_default()
     if config.data.promoter_seq is None:
-        config.data.promoter_seq = DEFAULT_PROMOTER_SEQ
+        config.data.promoter_seq = default_spec.promoter_seq
     if config.data.barcode_seq is None:
-        config.data.barcode_seq = DEFAULT_BARCODE_SEQ
+        config.data.barcode_seq = default_spec.barcode_seq
 
 def _build_overrides(args: argparse.Namespace) -> dict[str, Any]:
     overrides: dict[str, Any] = {
@@ -105,6 +106,7 @@ def _build_overrides(args: argparse.Namespace) -> dict[str, Any]:
         "input_tsv": args.input_tsv,
         "batch_size": args.batch_size,
         "sequence_length": args.sequence_length,
+        "construct_mode": args.construct_mode,
         "reverse_complement": args.reverse_complement,
         "rc_prob": args.rc_prob,
         "random_shift": args.random_shift,
@@ -172,14 +174,18 @@ def _build_overrides(args: argparse.Namespace) -> dict[str, Any]:
 
 def _make_dataset(config: TrainConfig, split: str) -> LentiMPRADataset:
     use_augment = split == "train"
+    construct_spec = ConstructSpec(
+        left_adapter=config.data.left_adapter_seq,
+        right_adapter=config.data.right_adapter_seq,
+        promoter_seq=config.data.promoter_seq,
+        barcode_seq=config.data.barcode_seq,
+    )
     return LentiMPRADataset(
         config.data.input_tsv,
         split=split,
         sequence_length=config.data.sequence_length,
-        promoter_seq=config.data.promoter_seq,
-        barcode_seq=config.data.barcode_seq,
-        left_adapter_seq=config.data.left_adapter_seq,
-        right_adapter_seq=config.data.right_adapter_seq,
+        construct_spec=construct_spec,
+        construct_mode=config.data.construct_mode,
         reverse_complement=config.data.reverse_complement if use_augment else False,
         rc_prob=config.data.rc_prob,
         random_shift=config.data.random_shift if use_augment else False,
@@ -212,7 +218,20 @@ def main() -> dict[str, Any]:
     print(f"Saved config to {run_dir / 'config.json'}")
 
     print(f"Loading pretrained weights from {config.checkpoint.pretrained_weights}...")
-    model = load_pretrained_model(config, device=device)
+    construct_spec = ConstructSpec(
+        left_adapter=config.data.left_adapter_seq,
+        right_adapter=config.data.right_adapter_seq,
+        promoter_seq=config.data.promoter_seq,
+        barcode_seq=config.data.barcode_seq,
+    )
+    model = EncoderMPRAModel.from_pretrained(
+        config.checkpoint.pretrained_weights,
+        config.head,
+        device=device,
+        construct_spec=construct_spec,
+    )
+    model.initialize_head(config.data.sequence_length, device)
+    model.eval()
 
     n_trainable = sum(p.numel() for p in model.head.parameters())
     n_total = sum(p.numel() for p in model.parameters())

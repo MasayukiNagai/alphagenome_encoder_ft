@@ -1,11 +1,6 @@
 """Encoder-only AlphaGenome fine-tuning utilities."""
 
 __all__ = [
-    "DEFAULT_BARCODE_SEQ",
-    "DEFAULT_FOLD_SPLITS",
-    "DEFAULT_LEFT_ADAPTER_SEQ",
-    "DEFAULT_PROMOTER_SEQ",
-    "DEFAULT_RIGHT_ADAPTER_SEQ",
     "DataConfig",
     "HeadConfig",
     "OptimConfig",
@@ -19,11 +14,13 @@ __all__ = [
     "parse_hidden_sizes",
     "LentiMPRADataset",
     "create_dataloader",
+    "ConstructSpec",
+    "LENTIMPRA_BARCODE",
+    "LENTIMPRA_LEFT_ADAPTER",
+    "LENTIMPRA_PROMOTER",
+    "LENTIMPRA_RIGHT_ADAPTER",
     "EncoderMPRAModel",
-    "load_pretrained_model",
     "MPRAHead",
-    "MPRAOracle",
-    "load_oracle",
     "train_epoch",
     "evaluate",
     "run_training_stage",
@@ -39,17 +36,22 @@ __all__ = [
 
 def __getattr__(name: str):
     if name in {
-        "DEFAULT_BARCODE_SEQ",
-        "DEFAULT_FOLD_SPLITS",
-        "DEFAULT_LEFT_ADAPTER_SEQ",
-        "DEFAULT_PROMOTER_SEQ",
-        "DEFAULT_RIGHT_ADAPTER_SEQ",
         "LentiMPRADataset",
         "create_dataloader",
     }:
         from . import data
 
         return getattr(data, name)
+    if name in {
+        "ConstructSpec",
+        "LENTIMPRA_BARCODE",
+        "LENTIMPRA_LEFT_ADAPTER",
+        "LENTIMPRA_PROMOTER",
+        "LENTIMPRA_RIGHT_ADAPTER",
+    }:
+        from . import constructs
+
+        return getattr(constructs, name)
     if name in {
         "DataConfig",
         "HeadConfig",
@@ -66,7 +68,7 @@ def __getattr__(name: str):
         from . import config
 
         return getattr(config, name)
-    if name in {"EncoderMPRAModel", "load_pretrained_model"}:
+    if name == "EncoderMPRAModel":
         from . import model
 
         return getattr(model, name)
@@ -74,10 +76,6 @@ def __getattr__(name: str):
         from .heads import MPRAHead
 
         return MPRAHead
-    if name in {"MPRAOracle", "load_oracle"}:
-        from . import oracle
-
-        return getattr(oracle, name)
     if name in {
         "train_epoch",
         "evaluate",

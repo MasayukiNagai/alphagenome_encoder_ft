@@ -46,6 +46,7 @@ def _deep_merge(base: dict[str, Any], overrides: Mapping[str, Any]) -> dict[str,
 class DataConfig:
     input_tsv: str | None = None
     sequence_length: int = 256
+    construct_mode: str = "flanked"
     batch_size: int = 32
     reverse_complement: bool = False
     rc_prob: float = 0.5
@@ -63,6 +64,8 @@ class DataConfig:
     def __post_init__(self) -> None:
         if self.sequence_length <= 0:
             raise ValueError("data.sequence_length must be > 0")
+        if self.construct_mode not in {"core", "flanked", "full"}:
+            raise ValueError("data.construct_mode must be one of core, flanked, full")
         if not 0 < self.subset_frac <= 1:
             raise ValueError("data.subset_frac must be in (0, 1]")
         if not 0 <= self.rc_prob <= 1:
@@ -214,6 +217,7 @@ class TrainConfig:
             "right_adapter": self.data.right_adapter_seq,
             "promoter_seq": self.data.promoter_seq,
             "barcode_seq": self.data.barcode_seq,
+            "construct_mode": self.data.construct_mode,
             "sequence_length": self.data.sequence_length,
         }
 

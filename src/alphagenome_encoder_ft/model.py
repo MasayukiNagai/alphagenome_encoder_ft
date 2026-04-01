@@ -10,17 +10,25 @@ import torch.nn as nn
 from alphagenome_pytorch import AlphaGenome
 from alphagenome_pytorch.extensions.finetuning.transfer import load_trunk, remove_all_heads
 
-from .config import HeadConfig, TrainConfig
+from .config import HeadConfig
+from .constructs import ConstructSpec
 from .heads import MPRAHead
 
 
 class EncoderMPRAModel(nn.Module):
     """Thin wrapper around an AlphaGenome backbone and an MPRA regression head."""
 
-    def __init__(self, backbone: nn.Module, head: nn.Module) -> None:
+    def __init__(
+        self,
+        backbone: nn.Module,
+        head: nn.Module,
+        *,
+        construct_spec: ConstructSpec | None = None,
+    ) -> None:
         super().__init__()
         self.backbone = backbone
         self.head = head
+        self.construct_spec = construct_spec
 
     @property
     def encoder(self) -> nn.Module:
@@ -79,29 +87,62 @@ class EncoderMPRAModel(nn.Module):
         head_config: HeadConfig,
         *,
         device: torch.device | str,
+        construct_spec: ConstructSpec | None = None,
         backbone_factory=AlphaGenome,
     ) -> "EncoderMPRAModel":
         backbone = backbone_factory()
         backbone = load_trunk(backbone, pretrained_weights, exclude_heads=True)
         backbone = remove_all_heads(backbone)
-        model = cls(backbone, MPRAHead(**head_config.__dict__))
+        model = cls(backbone, MPRAHead(**head_config.__dict__), construct_spec=construct_spec)
         model.set_encoder_trainable(False)
         model.to(device)
         return model
 
+    @classmethod
+    def from_checkpoint(
+        cls,
+        checkpoint_path: str | Path,
+        *,
+        device: torch.device | str,
+        backbone_factory=AlphaGenome,
+    ) -> "EncoderMPRAModel":
+        checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+        save_mode = checkpoint.get("save_mode", "minimal")
+        if save_mode == "head":
+            raise ValueError("Head-only checkpoints cannot be loaded standalone")
 
-def load_pretrained_model(
-    config: TrainConfig,
-    *,
-    device: torch.device | str,
-    backbone_factory=AlphaGenome,
-) -> EncoderMPRAModel:
-    model = EncoderMPRAModel.from_pretrained(
-        config.checkpoint.pretrained_weights,
-        config.head,
-        device=device,
-        backbone_factory=backbone_factory,
-    )
-    model.initialize_head(config.data.sequence_length, device)
-    model.eval()
-    return model
+        head_config = HeadConfig(**checkpoint.get("head_config", {}))
+        construct_config = checkpoint.get("construct_config", {})
+        construct_spec = ConstructSpec(
+            left_adapter=construct_config.get("left_adapter"),
+            right_adapter=construct_config.get("right_adapter"),
+            promoter_seq=construct_config.get("promoter_seq"),
+            barcode_seq=construct_config.get("barcode_seq"),
+        )
+
+        model = cls(
+            backbone_factory(),
+            MPRAHead(**head_config.__dict__),
+            construct_spec=construct_spec,
+        )
+        sequence_length = construct_config.get("sequence_length")
+        if sequence_length is None:
+            config = checkpoint.get("config", {})
+            if isinstance(config, dict):
+                sequence_length = config.get("data", {}).get("sequence_length")
+        if sequence_length is None:
+            raise ValueError("Checkpoint is missing construct sequence_length needed to initialize the head")
+        model.initialize_head(int(sequence_length), device)
+
+        if save_mode == "minimal":
+            model.encoder.load_state_dict(checkpoint["encoder_state_dict"])
+        elif save_mode == "full":
+            model.load_state_dict(checkpoint["model_state_dict"], strict=False)
+        else:
+            raise ValueError(f"Unknown checkpoint save_mode: {save_mode}")
+
+        model.head.load_state_dict(checkpoint["head_state_dict"])
+        model.set_encoder_trainable(False)
+        model.to(device)
+        model.eval()
+        return model

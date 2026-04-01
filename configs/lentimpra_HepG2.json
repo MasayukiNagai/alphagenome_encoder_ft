@@ -3,6 +3,7 @@
   "data": {
     "input_tsv": null,
     "sequence_length": 256,
+    "construct_mode": "flanked",
     "batch_size": 32,
     "reverse_complement": true,
     "rc_prob": 0.5,
