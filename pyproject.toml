@@ -5,7 +5,7 @@ description = "Encoder-only AlphaGenome fine-tuning utilities for lentiMPRA."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "alphagenome-pytorch",
+    "alphagenome-pytorch @ git+https://github.com/genomicsxai/alphagenome-pytorch.git",
     "torch",
 ]
 
@@ -13,9 +13,6 @@ dependencies = [
 dev = [
     "pytest",
 ]
-
-[tool.uv.sources]
-alphagenome-pytorch = { git = "https://github.com/genomicsxai/alphagenome-pytorch" }
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
