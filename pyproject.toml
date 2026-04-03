@@ -23,6 +23,7 @@ testpaths = ["tests"]
 
 [dependency-groups]
 train = [
+    "matplotlib>=3.10.8",
     "tqdm>=4.67.3",
     "wandb>=0.25.1",
 ]
