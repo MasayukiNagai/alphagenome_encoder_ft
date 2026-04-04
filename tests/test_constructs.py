@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 import torch
+from alphagenome_pytorch.utils.sequence import sequence_to_onehot
 
 from alphagenome_encoder_ft.config import TrainConfig
 from alphagenome_encoder_ft.constructs import ConstructSpec
@@ -232,3 +233,88 @@ def test_from_checkpoint_rejects_head_only_checkpoint(tmp_path: Path):
             device="cpu",
             backbone_factory=DummyAlphaGenome,
         )
+
+
+def test_predict_sequences_matches_direct_forward():
+    torch.manual_seed(0)
+    construct_spec = ConstructSpec(left_adapter="A", right_adapter="C", promoter_seq="G", barcode_seq="T")
+    model = EncoderMPRAModel(
+        DummyAlphaGenome(),
+        MPRAHead(pooling_type="flatten", hidden_sizes=8),
+        construct_spec=construct_spec,
+    )
+    model.initialize_head(sequence_length=4, device="cpu")
+    model.eval()
+
+    construct = construct_spec.assemble_sequence("ac", mode="promoter_barcode")
+    onehot = torch.from_numpy(sequence_to_onehot(construct).astype(np.float32)).unsqueeze(0)
+
+    direct = model(onehot, torch.zeros(1, dtype=torch.long))
+    predicted = model.predict_sequences(["ac"], construct_mode="promoter_barcode")
+
+    np.testing.assert_allclose(predicted.detach().numpy(), direct.detach().numpy(), rtol=1e-5, atol=1e-5)
+
+
+def test_predict_sequences_batches_inputs_and_organism_idx():
+    torch.manual_seed(0)
+    model = EncoderMPRAModel(
+        DummyAlphaGenome(),
+        MPRAHead(pooling_type="flatten", hidden_sizes=8),
+    )
+    model.initialize_head(sequence_length=2, device="cpu")
+    model.eval()
+
+    onehot = torch.stack(
+        [
+            torch.from_numpy(sequence_to_onehot("AC").astype(np.float32)),
+            torch.from_numpy(sequence_to_onehot("GT").astype(np.float32)),
+        ],
+        dim=0,
+    )
+    organism_idx = torch.tensor([0, 1], dtype=torch.long)
+
+    direct = model(onehot, organism_idx)
+    predicted = model.predict_sequences(["AC", "GT"], organism_idx=organism_idx)
+
+    np.testing.assert_allclose(predicted.detach().numpy(), direct.detach().numpy(), rtol=1e-5, atol=1e-5)
+
+
+def test_predict_sequences_without_construct_mode_treats_inputs_as_final_sequences():
+    torch.manual_seed(0)
+    model = EncoderMPRAModel(
+        DummyAlphaGenome(),
+        MPRAHead(pooling_type="flatten", hidden_sizes=8),
+        construct_spec=ConstructSpec(left_adapter="A", right_adapter="C", promoter_seq="G", barcode_seq="T"),
+    )
+    model.initialize_head(sequence_length=4, device="cpu")
+    model.eval()
+
+    onehot = torch.from_numpy(sequence_to_onehot("acgt").astype(np.float32)).unsqueeze(0)
+    direct = model(onehot, torch.zeros(1, dtype=torch.long))
+    predicted = model.predict_sequences(["acgt"])
+
+    np.testing.assert_allclose(predicted.detach().numpy(), direct.detach().numpy(), rtol=1e-5, atol=1e-5)
+
+
+def test_predict_sequences_requires_construct_spec_when_construct_mode_is_set():
+    torch.manual_seed(0)
+    model = EncoderMPRAModel(
+        DummyAlphaGenome(),
+        MPRAHead(pooling_type="flatten", hidden_sizes=8),
+    )
+    model.initialize_head(sequence_length=2, device="cpu")
+
+    with pytest.raises(ValueError, match="construct_spec"):
+        model.predict_sequences(["AC"], construct_mode="promoter_barcode")
+
+
+def test_predict_sequences_rejects_mismatched_lengths():
+    torch.manual_seed(0)
+    model = EncoderMPRAModel(
+        DummyAlphaGenome(),
+        MPRAHead(pooling_type="flatten", hidden_sizes=8),
+    )
+    model.initialize_head(sequence_length=2, device="cpu")
+
+    with pytest.raises(ValueError, match="same length"):
+        model.predict_sequences(["A", "AC"])

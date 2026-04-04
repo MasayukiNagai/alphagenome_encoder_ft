@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 
 import torch
@@ -9,6 +10,7 @@ import torch.nn as nn
 
 from alphagenome_pytorch import AlphaGenome
 from alphagenome_pytorch.extensions.finetuning.transfer import load_trunk, remove_all_heads
+from alphagenome_pytorch.utils.sequence import sequence_to_onehot_tensor
 
 from .config import HeadConfig
 from .constructs import ConstructSpec
@@ -55,6 +57,37 @@ class EncoderMPRAModel(nn.Module):
         organism_idx: torch.Tensor | None = None,
     ) -> torch.Tensor:
         return self.predict_from_encoder(self.encode(sequences, organism_idx))
+
+    def predict_sequences(
+        self,
+        sequences: Sequence[str],
+        *,
+        construct_mode: str | None = None,
+        organism_idx: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        batch_sequences = list(sequences)
+        if not batch_sequences:
+            raise ValueError("predict_sequences requires at least one sequence")
+
+        if construct_mode is not None:
+            if self.construct_spec is None:
+                raise ValueError("construct_mode requires model.construct_spec to be set")
+            batch_sequences = self.construct_spec.assemble_sequences(batch_sequences, mode=construct_mode)
+        else:
+            batch_sequences = [seq.strip().upper() for seq in batch_sequences]
+
+        lengths = {len(seq) for seq in batch_sequences}
+        if len(lengths) != 1:
+            raise ValueError("All sequences must have the same length")
+
+        device = next(self.parameters()).device
+        onehot = torch.stack(
+            [sequence_to_onehot_tensor(seq, dtype=torch.float32, device=device) for seq in batch_sequences],
+            dim=0,
+        )
+
+        with torch.no_grad():
+            return self(onehot, organism_idx)
 
     def initialize_head(self, sequence_length: int, device: torch.device | str) -> None:
         with torch.no_grad():
