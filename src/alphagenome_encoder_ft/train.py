@@ -19,7 +19,7 @@ except ImportError:
     tqdm = None
 
 from .config import OptimConfig, TrainConfig
-from .model import EncoderMPRAModel
+from .model import AlphaGenomeEncoderModel
 
 
 def _autocast_context(device: torch.device, use_amp: bool):
@@ -82,7 +82,7 @@ def _gather_predictions(preds: list[Tensor], targets: list[Tensor]) -> tuple[Ten
     return pred_tensor, target_tensor
 
 
-def set_encoder_trainable(model: EncoderMPRAModel, trainable: bool) -> None:
+def set_encoder_trainable(model: AlphaGenomeEncoderModel, trainable: bool) -> None:
     model.set_encoder_trainable(trainable)
 
 
@@ -133,7 +133,7 @@ def _num_batches(data_loader) -> int | None:
 
 
 def train_epoch(
-    model: EncoderMPRAModel,
+    model: AlphaGenomeEncoderModel,
     train_loader,
     optimizer: torch.optim.Optimizer,
     device: torch.device | str,
@@ -225,7 +225,7 @@ def train_epoch(
 
 @torch.no_grad()
 def evaluate(
-    model: EncoderMPRAModel,
+    model: AlphaGenomeEncoderModel,
     data_loader,
     device: torch.device | str,
     *,
@@ -266,7 +266,7 @@ def evaluate(
 
 def save_checkpoint(
     path: str | Path,
-    model: EncoderMPRAModel,
+    model: AlphaGenomeEncoderModel,
     *,
     config: TrainConfig,
     save_mode: str,
@@ -304,7 +304,7 @@ def save_checkpoint(
 
 def load_checkpoint(
     path: str | Path,
-    model: EncoderMPRAModel,
+    model: AlphaGenomeEncoderModel,
     *,
     map_location: str | torch.device = "cpu",
 ) -> dict[str, Any]:
@@ -353,7 +353,7 @@ def _append_stage_history(history: dict[str, list[float]], stage_history: dict[s
 
 
 def run_training_stage(
-    model: EncoderMPRAModel,
+    model: AlphaGenomeEncoderModel,
     train_loader,
     *,
     optimizer: torch.optim.Optimizer,
@@ -525,11 +525,11 @@ def run_training_stage(
 
 
 def run_two_stage_training(
-    model: EncoderMPRAModel,
+    model: AlphaGenomeEncoderModel,
     train_loader,
     *,
     stage1_optimizer: torch.optim.Optimizer,
-    stage2_optimizer_factory: Callable[[EncoderMPRAModel], torch.optim.Optimizer] | None,
+    stage2_optimizer_factory: Callable[[AlphaGenomeEncoderModel], torch.optim.Optimizer] | None,
     config: TrainConfig,
     device: torch.device | str,
     val_loader=None,

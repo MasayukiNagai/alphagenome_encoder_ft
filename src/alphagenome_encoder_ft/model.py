@@ -17,7 +17,7 @@ from .constructs import ConstructSpec
 from .heads import MPRAHead
 
 
-class EncoderMPRAModel(nn.Module):
+class AlphaGenomeEncoderModel(nn.Module):
     """Thin wrapper around an AlphaGenome backbone and an MPRA regression head."""
 
     def __init__(
@@ -129,7 +129,7 @@ class EncoderMPRAModel(nn.Module):
         construct_spec: ConstructSpec | None = None,
         backbone_factory=AlphaGenome,
         head_type: str | None = None,
-    ) -> "EncoderMPRAModel":
+    ) -> "AlphaGenomeEncoderModel":
         device = cls._resolve_device(device)
         backbone = backbone_factory()
         backbone = load_trunk(backbone, pretrained_weights, exclude_heads=True)
@@ -148,7 +148,7 @@ class EncoderMPRAModel(nn.Module):
         *,
         device: torch.device | str | None = None,
         backbone_factory=AlphaGenome,
-    ) -> "EncoderMPRAModel":
+    ) -> "AlphaGenomeEncoderModel":
         device = cls._resolve_device(device)
         checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
         save_mode = checkpoint.get("save_mode", "minimal")
@@ -193,3 +193,7 @@ class EncoderMPRAModel(nn.Module):
         model.to(device)
         model.eval()
         return model
+
+
+# Backward compatibility alias.
+EncoderMPRAModel = AlphaGenomeEncoderModel

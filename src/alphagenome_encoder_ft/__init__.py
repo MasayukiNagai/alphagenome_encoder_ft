@@ -23,6 +23,7 @@ __all__ = [
     "LENTIMPRA_LEFT_ADAPTER",
     "LENTIMPRA_PROMOTER",
     "LENTIMPRA_RIGHT_ADAPTER",
+    "AlphaGenomeEncoderModel",
     "EncoderMPRAModel",
     "MPRAHead",
     "DeepSTARRHead",
@@ -77,7 +78,7 @@ def __getattr__(name: str):
         from . import config
 
         return getattr(config, name)
-    if name == "EncoderMPRAModel":
+    if name in {"AlphaGenomeEncoderModel", "EncoderMPRAModel"}:
         from . import model
 
         return getattr(model, name)
