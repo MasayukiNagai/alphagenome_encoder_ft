@@ -16,7 +16,7 @@ import torch
 
 from alphagenome_encoder_ft import (
     ConstructSpec,
-    EncoderMPRAModel,
+    AlphaGenomeEncoderModel,
     LentiMPRADataset,
     TrainConfig,
     create_dataloader,
@@ -222,7 +222,7 @@ def main() -> dict[str, Any]:
     output_dir = Path(args.output_dir).resolve() if args.output_dir is not None else default_output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    model = EncoderMPRAModel.from_checkpoint(checkpoint_path, device=device)
+    model = AlphaGenomeEncoderModel.from_checkpoint(checkpoint_path, device=device)
     construct_spec = model.construct_spec or ConstructSpec(
         left_adapter=config.data.left_adapter_seq,
         right_adapter=config.data.right_adapter_seq,

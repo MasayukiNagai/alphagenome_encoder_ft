@@ -15,7 +15,7 @@ Note: The current codebase does not yet include the full feature surface of `alp
 
 Both heads share the same pooling modes (`flatten`, `center`, `mean`, `sum`, `max`) and the same `LayerNorm → MLP → Linear` layout; `DeepSTARRHead` is a subclass of `MPRAHead` whose only functional difference is `num_outputs=2`.
 
-Checkpoints persist a top-level `head_type` field so `EncoderMPRAModel.from_checkpoint(...)` can dispatch to the right class. Checkpoints written before this field existed (no `head_type` key) default to `"mpra"` for backward compatibility.
+Checkpoints persist a top-level `head_type` field so `AlphaGenomeEncoderModel.from_checkpoint(...)` can dispatch to the right class. Checkpoints written before this field existed (no `head_type` key) default to `"mpra"` for backward compatibility.
 
 ## Installation
 
@@ -51,7 +51,7 @@ alphagenome-encoder-ft/
 │   ├── constructs.py # ConstructSpec assembly rules
 │   ├── data.py       # lentiMPRA + DeepSTARR datasets and dataloader helpers
 │   ├── heads.py      # MPRAHead, DeepSTARRHead
-│   ├── model.py      # EncoderMPRAModel wrapper (AG Encoder + MPRAHead)
+│   ├── model.py      # AlphaGenomeEncoderModel wrapper (AG Encoder + MPRAHead)
 │   └── train.py      # reusable encoder-only training utilities
 ├── configs/
 │   ├── lentimpra_HepG2.json
@@ -101,14 +101,15 @@ The evaluator reconstructs the model from the checkpoint config, runs the `test`
 ## Load checkpoint
 
 ```python
-from alphagenome_encoder_ft import EncoderMPRAModel
+from alphagenome_encoder_ft import AlphaGenomeEncoderModel
 
-model = EncoderMPRAModel.from_checkpoint("/path/to/best.pt")
+model = AlphaGenomeEncoderModel.from_checkpoint("/path/to/best.pt")
 construct = model.construct_spec.assemble_sequence("ACGT", mode="promoter_barcode")
 ```
 
 - Standalone loading supports `save_mode="minimal"` and `save_mode="full"`.
-- `save_mode="head"` does not include enough backbone state to reconstruct an `EncoderMPRAModel` by itself.
+- `save_mode="head"` does not include enough backbone state to reconstruct an `AlphaGenomeEncoderModel` by itself.
+- `EncoderMPRAModel` remains available as a backward-compatible alias.
 - The checkpoint from `train_mpra.py` already contains the construct definition under `construct_config`, so `model.construct_spec` is typically ready to use after `from_checkpoint(...)`. For `construct_spec`, see below.
 
 ## Construct MPRA reporters

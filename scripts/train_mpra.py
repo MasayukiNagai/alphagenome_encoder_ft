@@ -12,7 +12,7 @@ import torch
 
 from alphagenome_encoder_ft import (
     ConstructSpec,
-    EncoderMPRAModel,
+    AlphaGenomeEncoderModel,
     LentiMPRADataset,
     TrainConfig,
     create_dataloader,
@@ -244,7 +244,7 @@ def main() -> dict[str, Any]:
         promoter_seq=config.data.promoter_seq,
         barcode_seq=config.data.barcode_seq,
     )
-    model = EncoderMPRAModel.from_pretrained(
+    model = AlphaGenomeEncoderModel.from_pretrained(
         config.checkpoint.pretrained_weights,
         config.head,
         device=device,
@@ -255,7 +255,7 @@ def main() -> dict[str, Any]:
 
     n_trainable = sum(p.numel() for p in model.head.parameters())
     n_total = sum(p.numel() for p in model.parameters())
-    print("EncoderMPRAModel created.")
+    print("AlphaGenomeEncoderModel created.")
     print(f"  Trainable (head)   : {n_trainable:,}")
     print(f"  Frozen (backbone)  : {n_total - n_trainable:,}")
     print(f"  Total parameters   : {n_total:,}")

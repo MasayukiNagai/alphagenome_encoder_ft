@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 import torch
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader, TensorDataset
@@ -198,7 +199,7 @@ def test_run_training_stage_runs_validation_within_each_epoch_and_emits_callback
     )
 
     assert len(result["history"]["train_loss"]) == 3
-    assert result["history"]["val_epoch"] == [1 / 3, 2 / 3, 4 / 3, 5 / 3, 7 / 3, 8 / 3]
+    assert result["history"]["val_epoch"] == pytest.approx([1 / 3, 2 / 3, 4 / 3, 5 / 3, 7 / 3, 8 / 3])
     assert result["history"]["test_epoch"] == []
     assert [event["epoch"] for event in epoch_events] == [1.0, 2.0, 3.0]
     assert epoch_events[0]["val_loss"] >= 0.0

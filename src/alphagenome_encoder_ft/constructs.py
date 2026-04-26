@@ -32,10 +32,10 @@ class ConstructSpec:
     promoter_seq: str | None = LENTIMPRA_PROMOTER
     barcode_seq: str | None = LENTIMPRA_BARCODE
 
-    _left_adapter_onehot: torch.Tensor | None = field(init=False, repr=False, default=None)
-    _right_adapter_onehot: torch.Tensor | None = field(init=False, repr=False, default=None)
-    _promoter_onehot: torch.Tensor | None = field(init=False, repr=False, default=None)
-    _barcode_onehot: torch.Tensor | None = field(init=False, repr=False, default=None)
+    _left_adapter_onehot: torch.Tensor | None = field(init=False, repr=False, compare=False, default=None)
+    _right_adapter_onehot: torch.Tensor | None = field(init=False, repr=False, compare=False, default=None)
+    _promoter_onehot: torch.Tensor | None = field(init=False, repr=False, compare=False, default=None)
+    _barcode_onehot: torch.Tensor | None = field(init=False, repr=False, compare=False, default=None)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "_left_adapter_onehot", self._encode_constant(self.left_adapter))
@@ -86,7 +86,7 @@ class ConstructSpec:
 
         if missing:
             raise ValueError(
-                f"Mode {mode!r} requires missing components: {', '.join(missing)}"
+                f"Mode {mode!r} requires construct components: {', '.join(missing)}"
             )
 
     # -------------------------
