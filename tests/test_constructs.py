@@ -210,7 +210,11 @@ def test_from_checkpoint_defaults_to_inferred_device(tmp_path: Path):
         backbone_factory=DummyAlphaGenome,
     )
     expected_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    assert next(restored.parameters()).device == expected_device
+    restored_device = next(restored.parameters()).device
+    if expected_device.type == "cuda":
+        assert restored_device.type == expected_device.type
+    else:
+        assert restored_device == expected_device
     assert restored.construct_spec == construct_spec
 
 
