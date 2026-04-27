@@ -127,7 +127,7 @@ If your data always arrives in the same final reporter shape, `ConstructSpec` is
 
 ### `ConstructSpec`
 
-[`ConstructSpec`](/grid/koo/home/nagai/projects/ag_mpra_torch/alphagenome-encoder-ft/src/alphagenome_encoder_ft/constructs.py) defines the fixed reporter pieces:
+[`ConstructSpec`](https://github.com/MasayukiNagai/alphagenome-encoder-ft/blob/main/src/alphagenome_encoder_ft/constructs.py) defines the fixed reporter pieces:
 `left_adapter`, `right_adapter`, `promoter_seq`, and `barcode_seq`.
 
 Use the default lentiMPRA construct:
